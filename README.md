@@ -4,12 +4,24 @@ A signal-following trading bot for Ultrachain (Solana-based). It reads buy and s
 
 **It only paper trades.** It asks Jupiter for the real route and output amount it would get, records that as the fill, and never signs or sends a transaction. `mode = "live"` is refused at startup on purpose. Run it for a week or two, then read `report`.
 
+![Paper trading dashboard](docs/dashboard.png)
+
+*The `report --html` dashboard, shown with **simulated** demo data from `scripts/demo-ledger.py`. These are not results from a real strategy.*
+
 ## Quick start
 
 ```sh
 cp config.example.toml config.toml   # edit tokens, signal source, limits
 cargo run --release -- run            # leave running; Ctrl-C to stop
 cargo run --release -- report         # any time, even while running
+cargo run --release -- report --html data/dashboard.html   # same, plus a dashboard page
+```
+
+The dashboard is a single offline HTML file. It shows equity over time, daily PnL, exits by reason, recent trades and rejected signals, with hover tooltips and light and dark mode. To preview it without a real run:
+
+```sh
+scripts/demo-ledger.py data/demo-ledger.jsonl
+cargo run -- report -l data/demo-ledger.jsonl --html data/dashboard.html
 ```
 
 Restarts are safe. Positions, cash, the daily baseline and the signal ids already seen are saved to `data/state.json` after every tick. Every event is appended to `data/ledger.jsonl`.

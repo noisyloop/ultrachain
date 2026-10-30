@@ -171,7 +171,7 @@ pub fn render(s: &Summary) -> String {
     o
 }
 
-fn verdict(s: &Summary) -> String {
+pub fn verdict(s: &Summary) -> String {
     let net = s.gross_profit - s.gross_loss;
     if s.trades < 30 {
         return format!(

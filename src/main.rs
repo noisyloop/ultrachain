@@ -1,4 +1,5 @@
 mod config;
+mod dashboard;
 mod engine;
 mod jupiter;
 mod ledger;
@@ -36,6 +37,9 @@ enum Cmd {
     Report {
         #[arg(short, long, default_value = "data/ledger.jsonl")]
         ledger: PathBuf,
+        /// Also write a self-contained HTML dashboard to this path.
+        #[arg(long)]
+        html: Option<PathBuf>,
     },
 }
 
@@ -49,9 +53,14 @@ async fn main() -> Result<()> {
 
     match Cli::parse().cmd {
         Cmd::Run { config } => run(Config::load(&config)?).await,
-        Cmd::Report { ledger } => {
+        Cmd::Report { ledger, html } => {
             let events = ledger::read_all(&ledger)?;
-            print!("{}", report::render(&report::summarize(&events)));
+            let summary = report::summarize(&events);
+            print!("{}", report::render(&summary));
+            if let Some(path) = html {
+                std::fs::write(&path, dashboard::render(&events, &summary))?;
+                println!("\nDashboard written to {}", path.display());
+            }
             Ok(())
         }
     }
