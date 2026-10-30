@@ -24,9 +24,9 @@ Hyperlane's deploy tooling is the Rust `hyperlane-sealevel-client`. Every comman
 | Direction | Who secures it |
 |---|---|
 | Solana → Ultrachain | Hyperlane's 4 Solana mainnet validators, 3 must sign (`config/ultrachain-multisig-config.json`). |
-| Ultrachain → Solana | **Your** validators (`config/solana-multisig-config.json`). |
+| Ultrachain → Solana | **Your** validators, plus a 24-hour transfer cap and a pause switch (`config/solana-ism.template.json`). |
 
-**The second row is the one that matters.** Anyone who controls a threshold of your validator keys can release every USDC locked on Solana. Most of the large bridge hacks were exactly this. Treat these keys like the treasury:
+**The second row is the one that matters.** Anyone who controls a threshold of your validator keys can release every USDC locked on Solana. Most of the large bridge hacks were exactly this. The cap limits how much one compromise can take: by default at most 50,000 USDC per rolling 24 hours. Treat these keys like the treasury:
 - For production, run at least 3 validators with a threshold of 2.
 - Put them on separate machines, ideally with separate operators.
 - Use KMS or HSM-backed keys where you can.
@@ -48,7 +48,7 @@ If Ultrachain changed any of these, find out on a local Ultrachain validator fir
 | Key | Type | Funded with | Used for |
 |---|---|---|---|
 | Deployer | Solana keypair | SOL **and** Ultrachain gas | Deploying everything. It becomes the owner and upgrade authority, so move both to a multisig afterwards. |
-| Validator signer (×N) | secp256k1 (EVM-style) | nothing | Signing Ultrachain checkpoints. Its `0x…` address goes in `config/solana-multisig-config.json`. |
+| Validator signer (×N) | secp256k1 (EVM-style) | nothing | Signing Ultrachain checkpoints. Its `0x…` address goes in `config/solana-ism.template.json`. |
 | Validator chain signer (×N) | Solana keypair | a little Ultrachain gas | A one-time self-announce on Ultrachain. |
 | Relayer | Solana keypair(s) | SOL and Ultrachain gas | Delivering messages in both directions. |
 
@@ -69,13 +69,18 @@ cd bridge
 2. **Ultrachain core.** Run `scripts/deploy.sh core`. This deploys the Mailbox, the multisig ISM (set as the Mailbox default), the IGP and ValidatorAnnounce. It writes the program IDs to `environments/mainnet/ultrachain/core/program-ids.json`.
 3. **Trust Solana on Ultrachain.** Run `scripts/deploy.sh ism-ultrachain`. This loads Hyperlane's Solana validator set into Ultrachain's ISM.
    - That set was copied from the monorepo at the pinned commit. Check it against Hyperlane's registry before mainnet, and update it whenever Hyperlane rotates validators.
-4. **Start your validators.** Generate the validator keys and put their addresses in `config/solana-multisig-config.json`. Then start each validator with the `validator` service in `agents/docker-compose.yml`.
+4. **Start your validators.** Generate the validator keys and put their addresses in `config/solana-ism.template.json`. Then start each validator with the `validator` service in `agents/docker-compose.yml`.
    - Each validator needs an S3 bucket that anyone can read.
    - They need `agent-config.json`, so run step 7 once with a dummy `SOLANA_INDEX_FROM` (the validator only reads the Ultrachain entry), or start them after step 7.
-5. **Trust your validators on Solana.** Run `scripts/deploy.sh ism-solana`. This deploys a multisig ISM program on Solana that only trusts your Ultrachain validators.
-   - Put the program ID it prints into `solanamainnet.interchainSecurityModule` in the token config.
-6. **Warp route.** Set `owner` and `uri` in `environments/mainnet/warp-routes/USDC-solanamainnet-ultrachain/token-config.json`. The `uri` points to the token's metadata JSON. Then run `scripts/deploy.sh warp`.
+5. **Warp route.** Set `owner` and `uri` in `environments/mainnet/warp-routes/USDC-solanamainnet-ultrachain/token-config.json`. For `uri`, host `metadata/usdc.json` at a public URL (this repo's raw GitHub URL works if the repo is public). Then run `scripts/deploy.sh warp`.
    - This deploys the collateral program on Solana and the synthetic program on Ultrachain, then enrolls each as the other's router.
+   - Until step 6, the Solana side uses the Solana mailbox's default security module. That has no validators for Ultrachain, so nothing can be released on Solana yet.
+6. **Lock down the Solana side.** Set `max_capacity` in `config/solana-ism.template.json` (USDC base units per 24 hours), then run `scripts/deploy.sh ism-solana`. This deploys a composite security module where all three checks must pass:
+   - your validators' signatures;
+   - the 24-hour rate limit, bound to your Solana router;
+   - a pause switch.
+
+   It then attaches the module to the route and records it in the token config, so re-running `warp` won't undo it. Re-running `ism-solana` updates the module in place and keeps the current pause state.
 7. **Agent config.** Get Solana's current mailbox nonce:
    ```sh
    .build/hyperlane-monorepo/rust/sealevel/target/release/hyperlane-sealevel-client \
@@ -95,11 +100,13 @@ cd bridge
 ## Before mainnet value goes through it
 
 - **Move ownership to a multisig.** Transfer ownership and upgrade authority of every program (ISMs, both warp routes, the Ultrachain core) from the deployer key to a multisig. The client has `token transfer-ownership`, `multisig-ism-message-id transfer-ownership`, `mailbox transfer-ownership` and `squads` subcommands.
-- **Add a rate limit.** The Sealevel composite ISM (`rust/sealevel/programs/ism/composite-ism`) supports a `RateLimited` node: a 24-hour token bucket. Wrapping the Solana-side ISM in one caps how much can be drained if your validators are ever compromised. This isn't set up here; it's the next hardening step.
 - **Monitor everything.** That means:
+  - `scripts/deploy.sh check-supply`, run every few minutes from cron or your monitoring. It exits with code `2` if synthetic USDC on Ultrachain is ever more than the USDC locked on Solana, which means someone is minting without backing. When that happens, pause first and investigate second;
   - validator checkpoint lag;
-  - relayer queue length and signer balances (an empty signer stops deliveries);
-  - USDC locked on Solana compared with synthetic supply on Ultrachain (these must match).
+  - relayer queue length and signer balances (an empty signer stops deliveries).
+- **Know how to pause.** `scripts/deploy.sh pause` makes Solana reject every Ultrachain → Solana message, and `unpause` reverses it. It needs the ISM owner key, so whoever holds that key must be reachable at all times. Any config update, including pause and unpause, also resets the rate limiter's on-chain state.
+- **Solana → Ultrachain has no cap.** Minting on Ultrachain requires real USDC locked on Solana first, and that direction is secured by Hyperlane's Solana validators.
+- **Watch for oversized deliveries.** If relayer deliveries to Solana fail with "transaction too large", the route needs an address lookup table. Hyperlane's test `rust/main/utils/run-locally/src/sealevel/warp_route_composite_ism.rs` shows how to build one; add it to `mailboxProcessAlts` in the agent config.
 - **Budget for Solana rent.** Two new Solana programs (the ISM and the collateral route) need rent for roughly 0.5 MB programs, which can be several SOL. The deployer also funds ATA payers (`--ata-payer-funding-amount`).
 - **Back up the program keypairs.** The keypairs written under `environments/**/keys/` are git-ignored here. Back them up if you might redeploy.
 

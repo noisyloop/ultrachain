@@ -49,7 +49,11 @@ pub struct FileSource {
 
 impl FileSource {
     pub fn new(path: PathBuf) -> Self {
-        Self { path, offset: 0, partial: String::new() }
+        Self {
+            path,
+            offset: 0,
+            partial: String::new(),
+        }
     }
 }
 
@@ -107,7 +111,12 @@ impl HttpSource {
 
 impl SignalSource for HttpSource {
     async fn poll(&mut self) -> Result<Vec<Signal>> {
-        let resp = self.http.get(&self.url).send().await.context("polling tracker")?;
+        let resp = self
+            .http
+            .get(&self.url)
+            .send()
+            .await
+            .context("polling tracker")?;
         let resp = resp.error_for_status().context("tracker returned error")?;
         resp.json().await.context("decoding tracker signals")
     }
@@ -153,7 +162,11 @@ mod tests {
         assert!(src.poll().await.unwrap().is_empty());
 
         let mut f = std::fs::File::create(&path).unwrap();
-        writeln!(f, r#"{{"id":"a","ts":"2026-10-30T00:00:00Z","token":"SOL","side":"buy"}}"#).unwrap();
+        writeln!(
+            f,
+            r#"{{"id":"a","ts":"2026-10-30T00:00:00Z","token":"SOL","side":"buy"}}"#
+        )
+        .unwrap();
         write!(f, r#"{{"id":"b","ts":"2026-10-30T00:00:01Z","#).unwrap();
         f.flush().unwrap();
 

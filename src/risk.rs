@@ -21,7 +21,9 @@ pub enum Reject {
 impl fmt::Display for Reject {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Reject::DailyCapHalted => write!(f, "daily loss cap hit; entries halted until next UTC day"),
+            Reject::DailyCapHalted => {
+                write!(f, "daily loss cap hit; entries halted until next UTC day")
+            }
             Reject::MaxOpenPositions => write!(f, "max open positions reached"),
             Reject::AlreadyHolding => write!(f, "already holding this token"),
             Reject::InsufficientBalance => write!(f, "insufficient balance"),
@@ -151,19 +153,31 @@ mod tests {
         let s = State::new(60.0, Utc::now());
         assert_eq!(entry_size(&s, &c, "A", None), Ok(58.0));
         let s = State::new(5.0, Utc::now());
-        assert_eq!(entry_size(&s, &c, "A", None), Err(Reject::InsufficientBalance));
+        assert_eq!(
+            entry_size(&s, &c, "A", None),
+            Err(Reject::InsufficientBalance)
+        );
     }
 
     #[test]
     fn rejects_when_halted_full_or_holding() {
         let mut s = State::new(1_000.0, Utc::now());
         s.positions.insert("A".into(), pos("A", 100.0));
-        assert_eq!(entry_size(&s, &cfg(), "A", None), Err(Reject::AlreadyHolding));
+        assert_eq!(
+            entry_size(&s, &cfg(), "A", None),
+            Err(Reject::AlreadyHolding)
+        );
         s.positions.insert("B".into(), pos("B", 100.0));
-        assert_eq!(entry_size(&s, &cfg(), "C", None), Err(Reject::MaxOpenPositions));
+        assert_eq!(
+            entry_size(&s, &cfg(), "C", None),
+            Err(Reject::MaxOpenPositions)
+        );
         s.positions.clear();
         s.halted = true;
-        assert_eq!(entry_size(&s, &cfg(), "C", None), Err(Reject::DailyCapHalted));
+        assert_eq!(
+            entry_size(&s, &cfg(), "C", None),
+            Err(Reject::DailyCapHalted)
+        );
     }
 
     #[test]
@@ -173,7 +187,10 @@ mod tests {
         assert_eq!(exit_trigger(&p, 92.0, &cfg()), Some(ExitReason::StopLoss));
         assert_eq!(exit_trigger(&p, 80.0, &cfg()), Some(ExitReason::StopLoss));
         assert_eq!(exit_trigger(&p, 119.0, &cfg()), None);
-        assert_eq!(exit_trigger(&p, 120.0, &cfg()), Some(ExitReason::TakeProfit));
+        assert_eq!(
+            exit_trigger(&p, 120.0, &cfg()),
+            Some(ExitReason::TakeProfit)
+        );
     }
 
     #[test]
@@ -181,7 +198,10 @@ mod tests {
         let mut c = cfg();
         c.est_fee_per_swap = 1.0;
         // 93 gross - 1 fee = 92 net = -8%.
-        assert_eq!(exit_trigger(&pos("A", 100.0), 93.0, &c), Some(ExitReason::StopLoss));
+        assert_eq!(
+            exit_trigger(&pos("A", 100.0), 93.0, &c),
+            Some(ExitReason::StopLoss)
+        );
     }
 
     #[test]

@@ -77,7 +77,10 @@ impl Ledger {
             .append(true)
             .open(path)
             .with_context(|| format!("opening ledger {}", path.display()))?;
-        Ok(Self { path: path.to_path_buf(), file })
+        Ok(Self {
+            path: path.to_path_buf(),
+            file,
+        })
     }
 
     pub fn record(&mut self, ev: &Event) -> Result<()> {
@@ -101,8 +104,7 @@ pub fn read_all(path: &Path) -> Result<Vec<Event>> {
         if line.trim().is_empty() {
             continue;
         }
-        let ev = serde_json::from_str(&line)
-            .with_context(|| format!("ledger line {}", i + 1))?;
+        let ev = serde_json::from_str(&line).with_context(|| format!("ledger line {}", i + 1))?;
         out.push(ev);
     }
     Ok(out)

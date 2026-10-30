@@ -5,3 +5,4 @@ bridge/.build/
 bridge/agents/.env
 bridge/keys/
 *-keypair.json
+__pycache__/

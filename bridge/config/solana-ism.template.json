@@ -1,0 +1,23 @@
+{
+  "_comment": "Root ISM for messages arriving on Solana from Ultrachain. All three sub-ISMs must pass. deploy.sh fills in __MAILBOX__ and __RECIPIENT__; edit the rest. max_capacity is in USDC base units (6 decimals) per rolling 24h: 50000000000 = 50,000 USDC/day.",
+  "type": "aggregation",
+  "threshold": 3,
+  "sub_isms": [
+    { "type": "pausable", "paused": false },
+    {
+      "type": "rateLimited",
+      "max_capacity": 50000000000,
+      "mailbox": "__MAILBOX__",
+      "recipient": "__RECIPIENT__"
+    },
+    {
+      "type": "multisigMessageId",
+      "threshold": 2,
+      "validators": [
+        "REPLACE_ME_VALIDATOR_1_ETH_ADDRESS",
+        "REPLACE_ME_VALIDATOR_2_ETH_ADDRESS",
+        "REPLACE_ME_VALIDATOR_3_ETH_ADDRESS"
+      ]
+    }
+  ]
+}

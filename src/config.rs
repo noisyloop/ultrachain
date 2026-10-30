@@ -125,7 +125,9 @@ impl Config {
             .with_context(|| format!("reading config {}", path.display()))?;
         let mut cfg: Config = toml::from_str(&raw).context("parsing config")?;
         if cfg.jupiter.api_key.is_none() {
-            cfg.jupiter.api_key = std::env::var("JUPITER_API_KEY").ok().filter(|k| !k.is_empty());
+            cfg.jupiter.api_key = std::env::var("JUPITER_API_KEY")
+                .ok()
+                .filter(|k| !k.is_empty());
         }
         cfg.validate()?;
         Ok(cfg)
@@ -162,8 +164,11 @@ impl Config {
 
     /// Resolve a signal's token reference, which may be a mint or a symbol.
     pub fn resolve_token(&self, token: &str) -> Option<&Token> {
-        self.token_by_mint(token)
-            .or_else(|| self.tokens.iter().find(|t| t.symbol.eq_ignore_ascii_case(token)))
+        self.token_by_mint(token).or_else(|| {
+            self.tokens
+                .iter()
+                .find(|t| t.symbol.eq_ignore_ascii_case(token))
+        })
     }
 }
 

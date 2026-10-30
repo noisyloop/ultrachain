@@ -3,7 +3,6 @@
     "type": "collateral",
     "decimals": 6,
     "token": "EPjFWdd5AufqSSqeM2qN1xDybapC8G4wEGGkZwyTDt1v",
-    "interchainSecurityModule": "REPLACE_ME_SOLANA_ISM_PROGRAM_ID",
     "owner": "REPLACE_ME_OWNER_PUBKEY"
   },
   "ultrachain": {
@@ -11,7 +10,7 @@
     "decimals": 6,
     "name": "USD Coin (Hyperlane)",
     "symbol": "USDC",
-    "uri": "REPLACE_ME_TOKEN_METADATA_URI",
+    "uri": "REPLACE_ME_PUBLIC_URL_OF_bridge/metadata/usdc.json",
     "owner": "REPLACE_ME_OWNER_PUBKEY"
   }
 }
