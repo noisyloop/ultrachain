@@ -105,7 +105,7 @@ cd bridge
   - validator checkpoint lag;
   - relayer queue length and signer balances (an empty signer stops deliveries).
 - **Know how to pause.** `scripts/deploy.sh pause` makes Solana reject every Ultrachain → Solana message, and `unpause` reverses it. It needs the ISM owner key, so whoever holds that key must be reachable at all times. Any config update, including pause and unpause, also resets the rate limiter's on-chain state.
-- **Solana → Ultrachain has no cap.** Minting on Ultrachain requires real USDC locked on Solana first,, and that direction is secured by Hyperlane's Solana validators.
+- **Solana → Ultrachain has no cap.** Minting on Ultrachain requires real USDC locked on Solana first, and that direction is secured by Hyperlane's Solana validators.
 - **Watch for oversized deliveries.** If relayer deliveries to Solana fail with "transaction too large", the route needs an address lookup table. Hyperlane's test `rust/main/utils/run-locally/src/sealevel/warp_route_composite_ism.rs` shows how to build one; add it to `mailboxProcessAlts` in the agent config.
 - **Budget for Solana rent.** Two new Solana programs (the ISM and the collateral route) need rent for roughly 0.5 MB programs, which can be several SOL. The deployer also funds ATA payers (`--ata-payer-funding-amount`).
 - **Back up the program keypairs.** The keypairs written under `environments/**/keys/` are git-ignored here. Back them up if you might redeploy.
