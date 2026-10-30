@@ -1,0 +1,25 @@
+# Install: copy the binary to /usr/local/bin and the repo's config.toml to
+# /opt/ultrachain-bot, then:
+#   sudo cp deploy/ultrachain-bot.service /etc/systemd/system/
+#   sudo systemctl enable --now ultrachain-bot
+#   journalctl -u ultrachain-bot -f
+[Unit]
+Description=Ultrachain trading bot (paper mode)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+User=bot
+WorkingDirectory=/opt/ultrachain-bot
+ExecStart=/usr/local/bin/ultrachain-bot run -c /opt/ultrachain-bot/config.toml
+Restart=always
+RestartSec=10
+# Optional: ALERT_WEBHOOK_URL, JUPITER_API_KEY
+EnvironmentFile=-/opt/ultrachain-bot/env
+NoNewPrivileges=true
+ProtectSystem=strict
+ReadWritePaths=/opt/ultrachain-bot
+ProtectHome=true
+
+[Install]
+WantedBy=multi-user.target

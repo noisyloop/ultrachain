@@ -22,6 +22,9 @@ pub struct Position {
     pub signal_id: String,
     /// Most recent quoted exit value (gross of exit fee).
     pub last_value: f64,
+    /// When `last_value` was last refreshed by a successful quote.
+    #[serde(default)]
+    pub last_marked: Option<DateTime<Utc>>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]

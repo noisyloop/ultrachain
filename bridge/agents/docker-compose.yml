@@ -68,6 +68,35 @@ services:
       RELAYER_ULTRACHAIN_KEY: ${RELAYER_ULTRACHAIN_KEY:?}
       RELAYER_SOLANA_KEY: ${RELAYER_SOLANA_KEY:?}
 
+  # Alerts if Ultrachain's synthetic USDC ever exceeds what's locked on Solana.
+  supply-monitor:
+    image: python:3.12-slim
+    restart: unless-stopped
+    volumes:
+      - ../:/bridge:ro
+    environment:
+      ALERT_WEBHOOK_URL: ${ALERT_WEBHOOK_URL:-}
+    command: ["python", "/bridge/scripts/check-supply.py", "--every", "300"]
+
+  # Metrics: agents serve Prometheus metrics on :9090 by default.
+  prometheus:
+    image: prom/prometheus:v3.5.0
+    restart: unless-stopped
+    volumes:
+      - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus-data:/prometheus
+    ports: ["127.0.0.1:9091:9090"]
+
+  grafana:
+    image: grafana/grafana:12.1.0
+    restart: unless-stopped
+    volumes:
+      - ./monitoring/grafana-datasource.yml:/etc/grafana/provisioning/datasources/prometheus.yml:ro
+      - grafana-data:/var/lib/grafana
+    ports: ["127.0.0.1:3000:3000"]
+
 volumes:
   validator-db:
   relayer-db:
+  prometheus-data:
+  grafana-data:

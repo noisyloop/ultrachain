@@ -121,6 +121,7 @@ mod tests {
             flatten_on_daily_cap: true,
             max_price_impact_pct: 1.0,
             max_signal_age_secs: 120,
+            max_mark_staleness_secs: 120,
             est_fee_per_swap: 0.0,
         }
     }
@@ -134,6 +135,7 @@ mod tests {
             opened_at: Utc::now(),
             signal_id: "s".into(),
             last_value: cost,
+            last_marked: None,
         }
     }
 

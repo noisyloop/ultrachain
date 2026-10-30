@@ -99,16 +99,22 @@ cd bridge
 
 ## Before mainnet value goes through it
 
-- **Move ownership to a multisig.** Transfer ownership and upgrade authority of every program (ISMs, both warp routes, the Ultrachain core) from the deployer key to a multisig. The client has `token transfer-ownership`, `multisig-ism-message-id transfer-ownership`, `mailbox transfer-ownership` and `squads` subcommands.
+- **Move ownership to a multisig.** `scripts/deploy.sh transfer-ownership <multisig-pubkey>` hands the owner role and upgrade authority of every program on both chains (Ultrachain core, both warp routes, the Solana ISM) to the new key. It asks for confirmation first. After this, `pause`, `unpause` and ISM updates must be signed by the multisig, so the script's own versions of them stop working; use the multisig's own interface.
 - **Monitor everything.** That means:
-  - `scripts/deploy.sh check-supply`, run every few minutes from cron or your monitoring. It exits with code `2` if synthetic USDC on Ultrachain is ever more than the USDC locked on Solana, which means someone is minting without backing. When that happens, pause first and investigate second;
+  - the supply check. The `supply-monitor` service in `agents/docker-compose.yml` runs it every 5 minutes and posts to `ALERT_WEBHOOK_URL` when it fails or recovers. By hand: `scripts/deploy.sh check-supply`. It exits with code `2` if synthetic USDC on Ultrachain is ever more than the USDC locked on Solana, which means someone is minting without backing. When that happens, pause first and investigate second;
   - validator checkpoint lag;
   - relayer queue length and signer balances (an empty signer stops deliveries).
+
+  The compose file also starts Prometheus, which scrapes both agents' `:9090` metrics, on `127.0.0.1:9091`, and Grafana on `127.0.0.1:3000` with Prometheus already connected. There are no dashboards yet: build panels for the metrics above, and keep both ports off the public internet.
 - **Know how to pause.** `scripts/deploy.sh pause` makes Solana reject every Ultrachain → Solana message, and `unpause` reverses it. It needs the ISM owner key, so whoever holds that key must be reachable at all times. Any config update, including pause and unpause, also resets the rate limiter's on-chain state.
 - **Solana → Ultrachain has no cap.** Minting on Ultrachain requires real USDC locked on Solana first, and that direction is secured by Hyperlane's Solana validators.
 - **Watch for oversized deliveries.** If relayer deliveries to Solana fail with "transaction too large", the route needs an address lookup table. Hyperlane's test `rust/main/utils/run-locally/src/sealevel/warp_route_composite_ism.rs` shows how to build one; add it to `mailboxProcessAlts` in the agent config.
 - **Budget for Solana rent.** Two new Solana programs (the ISM and the collateral route) need rent for roughly 0.5 MB programs, which can be several SOL. The deployer also funds ATA payers (`--ata-payer-funding-amount`).
 - **Back up the program keypairs.** The keypairs written under `environments/**/keys/` are git-ignored here. Back them up if you might redeploy.
+
+## Web app for users
+
+`ui/README.md` covers putting a Hyperlane Warp UI in front of the route. `scripts/gen-ui-config.py` generates the chain and route config it needs, and the same files can go in a PR to Hyperlane's registry.
 
 ## Relation to the trading bot
 

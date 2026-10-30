@@ -62,6 +62,9 @@ pub enum Event {
         equity: f64,
         day_pnl: f64,
         open_positions: usize,
+        /// Quote-token price of one unit of the configured benchmark token.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        benchmark_price: Option<f64>,
     },
 }
 

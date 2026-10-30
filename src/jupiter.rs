@@ -17,6 +17,8 @@ pub struct Quote {
     pub price_impact_pct: f64,
     /// Human-readable route, e.g. "Raydium>Orca".
     pub route: String,
+    /// The full quote response, which Jupiter's /swap endpoint takes back.
+    pub raw: serde_json::Value,
 }
 
 /// Anything that can price an exact-in swap. Implemented by the Jupiter
@@ -84,12 +86,13 @@ impl Quoter for JupiterClient {
             let body = resp.text().await.unwrap_or_default();
             bail!("jupiter quote failed ({status}): {body}");
         }
-        let q: QuoteResponse = resp.json().await.context("decoding jupiter quote")?;
-        parse_quote(q)
+        let raw: serde_json::Value = resp.json().await.context("decoding jupiter quote")?;
+        parse_quote(raw)
     }
 }
 
-fn parse_quote(q: QuoteResponse) -> Result<Quote> {
+fn parse_quote(raw: serde_json::Value) -> Result<Quote> {
+    let q: QuoteResponse = serde_json::from_value(raw.clone()).context("jupiter quote shape")?;
     let route = q
         .route_plan
         .iter()
@@ -108,6 +111,7 @@ fn parse_quote(q: QuoteResponse) -> Result<Quote> {
             .context("priceImpactPct")?
             * 100.0,
         route,
+        raw,
     })
 }
 
