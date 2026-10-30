@@ -36,7 +36,13 @@ pub fn summarize(events: &[Event]) -> Summary {
                 s.open_events += 1;
                 s.fees += fee;
             }
-            Event::Close { ts, reason, pnl, fee, .. } => {
+            Event::Close {
+                ts,
+                reason,
+                pnl,
+                fee,
+                ..
+            } => {
                 s.trades += 1;
                 s.fees += fee;
                 if *pnl > 0.0 {
@@ -52,7 +58,12 @@ pub fn summarize(events: &[Event]) -> Summary {
             }
             Event::Reject { reason, .. } => {
                 // Group "quote failed: <details>" etc. by their prefix.
-                let key = reason.split([':', '(']).next().unwrap_or(reason).trim().to_string();
+                let key = reason
+                    .split([':', '('])
+                    .next()
+                    .unwrap_or(reason)
+                    .trim()
+                    .to_string();
                 *s.rejects.entry(key).or_default() += 1;
             }
             Event::Halt { .. } => s.halts += 1,
@@ -79,7 +90,12 @@ pub fn render(s: &Summary) -> String {
     let _ = writeln!(o, "=== Paper trading report ===");
     if let (Some(a), Some(b)) = (s.first_ts, s.last_ts) {
         let days = (b - a).num_hours() as f64 / 24.0;
-        let _ = writeln!(o, "Period:          {} -> {} ({days:.1} days)", a.format("%F %R"), b.format("%F %R"));
+        let _ = writeln!(
+            o,
+            "Period:          {} -> {} ({days:.1} days)",
+            a.format("%F %R"),
+            b.format("%F %R")
+        );
     }
     if let (Some(start), Some(end)) = (s.start_equity, s.end_equity) {
         let _ = writeln!(
@@ -88,12 +104,28 @@ pub fn render(s: &Summary) -> String {
             (end - start) / start * 100.0
         );
     }
-    let _ = writeln!(o, "Closed trades:   {} (opened {})", s.trades, s.open_events);
+    let _ = writeln!(
+        o,
+        "Closed trades:   {} (opened {})",
+        s.trades, s.open_events
+    );
     if s.trades > 0 {
         let losses = s.trades - s.wins;
-        let _ = writeln!(o, "Win rate:        {:.1}%", s.wins as f64 / s.trades as f64 * 100.0);
-        let _ = writeln!(o, "Realized PnL:    {net:+.2} (fees included: {:.2})", s.fees);
-        let _ = writeln!(o, "Expectancy:      {:+.3} per trade", net / s.trades as f64);
+        let _ = writeln!(
+            o,
+            "Win rate:        {:.1}%",
+            s.wins as f64 / s.trades as f64 * 100.0
+        );
+        let _ = writeln!(
+            o,
+            "Realized PnL:    {net:+.2} (fees included: {:.2})",
+            s.fees
+        );
+        let _ = writeln!(
+            o,
+            "Expectancy:      {:+.3} per trade",
+            net / s.trades as f64
+        );
         if s.wins > 0 {
             let _ = writeln!(o, "Avg win:         {:+.2}", s.gross_profit / s.wins as f64);
         }
@@ -104,7 +136,11 @@ pub fn render(s: &Summary) -> String {
             let _ = writeln!(o, "Profit factor:   {:.2}", s.gross_profit / s.gross_loss);
         }
     }
-    let _ = writeln!(o, "Max drawdown:    {:.2} ({:.2}%)", s.max_drawdown, s.max_drawdown_pct);
+    let _ = writeln!(
+        o,
+        "Max drawdown:    {:.2} ({:.2}%)",
+        s.max_drawdown, s.max_drawdown_pct
+    );
     let _ = writeln!(o, "Daily-cap halts: {}", s.halts);
 
     if !s.by_reason.is_empty() {
@@ -115,7 +151,11 @@ pub fn render(s: &Summary) -> String {
     }
     if !s.by_day.is_empty() {
         let green = s.by_day.values().filter(|p| **p > 0.0).count();
-        let _ = writeln!(o, "\nDaily realized PnL ({green}/{} green days):", s.by_day.len());
+        let _ = writeln!(
+            o,
+            "\nDaily realized PnL ({green}/{} green days):",
+            s.by_day.len()
+        );
         for (d, pnl) in &s.by_day {
             let _ = writeln!(o, "  {d}  {pnl:+10.2}");
         }
@@ -142,9 +182,15 @@ fn verdict(s: &Summary) -> String {
     if net <= 0.0 {
         return "strategy lost money after fees. Do not go live.".into();
     }
-    let pf = if s.gross_loss > 0.0 { s.gross_profit / s.gross_loss } else { f64::INFINITY };
+    let pf = if s.gross_loss > 0.0 {
+        s.gross_profit / s.gross_loss
+    } else {
+        f64::INFINITY
+    };
     if pf < 1.2 {
-        format!("marginally profitable (profit factor {pf:.2}); real slippage and latency will likely erase it.")
+        format!(
+            "marginally profitable (profit factor {pf:.2}); real slippage and latency will likely erase it."
+        )
     } else {
         format!(
             "profitable on paper (profit factor {pf:.2}). Paper fills are optimistic: \

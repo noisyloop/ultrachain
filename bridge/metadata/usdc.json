@@ -1,0 +1,6 @@
+{
+  "name": "USD Coin (Hyperlane)",
+  "symbol": "USDC",
+  "description": "USDC bridged from Solana to Ultrachain via a Hyperlane warp route. Each token is backed 1:1 by USDC locked in the route's escrow on Solana.",
+  "image": "https://raw.githubusercontent.com/solana-labs/token-list/main/assets/mainnet/EPjFWdd5AufqSSqeM2qN1xDybapC8G4wEGGkZwyTDt1v/logo.png"
+}

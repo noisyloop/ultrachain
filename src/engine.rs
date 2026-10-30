@@ -37,7 +37,15 @@ impl<Q: Quoter, S: SignalSource> Engine<Q, S> {
             ledger = %ledger.path().display(),
             "paper engine ready"
         );
-        Ok(Self { cfg, quoter, source, state, ledger, state_path, last_snapshot: None })
+        Ok(Self {
+            cfg,
+            quoter,
+            source,
+            state,
+            ledger,
+            state_path,
+            last_snapshot: None,
+        })
     }
 
     pub async fn tick(&mut self, now: DateTime<Utc>) -> Result<()> {
@@ -96,8 +104,16 @@ impl<Q: Quoter, S: SignalSource> Engine<Q, S> {
             return Ok(());
         }
         self.state.halted = true;
-        tracing::warn!(day_pnl, cap = self.cfg.risk.daily_loss_cap, "daily loss cap hit; halting entries");
-        self.ledger.record(&Event::Halt { ts: now, day_pnl, cap: self.cfg.risk.daily_loss_cap })?;
+        tracing::warn!(
+            day_pnl,
+            cap = self.cfg.risk.daily_loss_cap,
+            "daily loss cap hit; halting entries"
+        );
+        self.ledger.record(&Event::Halt {
+            ts: now,
+            day_pnl,
+            cap: self.cfg.risk.daily_loss_cap,
+        })?;
         if self.cfg.risk.flatten_on_daily_cap {
             let mints: Vec<String> = self.state.positions.keys().cloned().collect();
             for mint in mints {
@@ -206,7 +222,10 @@ impl<Q: Quoter, S: SignalSource> Engine<Q, S> {
             ts: now,
             symbol: pos.symbol.clone(),
             mint: mint.to_string(),
-            reason: serde_json::to_value(reason)?.as_str().unwrap_or("?").to_string(),
+            reason: serde_json::to_value(reason)?
+                .as_str()
+                .unwrap_or("?")
+                .to_string(),
             qty: qty_ui,
             proceeds,
             fee,
@@ -282,7 +301,12 @@ mod tests {
             } else {
                 (amount as f64 / 1e5 * p[input] * 1e6) as u64
             };
-            Ok(Quote { in_amount: amount, out_amount: out, price_impact_pct: 0.1, route: "Mock".into() })
+            Ok(Quote {
+                in_amount: amount,
+                out_amount: out,
+                price_impact_pct: 0.1,
+                route: "Mock".into(),
+            })
         }
     }
 
@@ -300,8 +324,16 @@ mod tests {
             tick_secs: 1,
             data_dir: dir.to_path_buf(),
             starting_balance: 1_000.0,
-            quote_token: Token { symbol: "USDC".into(), mint: USDC.into(), decimals: 6 },
-            tokens: vec![Token { symbol: "BONK".into(), mint: BONK.into(), decimals: 5 }],
+            quote_token: Token {
+                symbol: "USDC".into(),
+                mint: USDC.into(),
+                decimals: 6,
+            },
+            tokens: vec![Token {
+                symbol: "BONK".into(),
+                mint: BONK.into(),
+                decimals: 5,
+            }],
             jupiter: JupiterConfig {
                 base_url: String::new(),
                 api_key: None,
@@ -324,13 +356,21 @@ mod tests {
     }
 
     fn sig(id: &str, side: Side, ts: DateTime<Utc>) -> Signal {
-        Signal { id: id.into(), ts, token: "BONK".into(), side, strength: None }
+        Signal {
+            id: id.into(),
+            ts,
+            token: "BONK".into(),
+            side,
+            strength: None,
+        }
     }
 
     #[tokio::test]
     async fn buy_then_stop_loss_then_halt() {
         let dir = tempfile::tempdir().unwrap();
-        let q = MockQuoter { prices: RefCell::new(HashMap::new()) };
+        let q = MockQuoter {
+            prices: RefCell::new(HashMap::new()),
+        };
         q.set(BONK, 0.5);
         let t0 = Utc::now();
         let src = QueueSource(VecDeque::from(vec![
@@ -369,7 +409,9 @@ mod tests {
     #[tokio::test]
     async fn rejects_stale_unknown_and_unheld_sells() {
         let dir = tempfile::tempdir().unwrap();
-        let q = MockQuoter { prices: RefCell::new(HashMap::new()) };
+        let q = MockQuoter {
+            prices: RefCell::new(HashMap::new()),
+        };
         q.set(BONK, 1.0);
         let t0 = Utc::now();
         let mut unknown = sig("s3", Side::Buy, t0);
@@ -383,14 +425,19 @@ mod tests {
         eng.tick(t0).await.unwrap();
         assert!(eng.state.positions.is_empty());
         let events = ledger::read_all(&dir.path().join("ledger.jsonl")).unwrap();
-        let rejects = events.iter().filter(|e| matches!(e, Event::Reject { .. })).count();
+        let rejects = events
+            .iter()
+            .filter(|e| matches!(e, Event::Reject { .. }))
+            .count();
         assert_eq!(rejects, 3);
     }
 
     #[tokio::test]
     async fn sell_signal_closes_with_profit_and_state_persists() {
         let dir = tempfile::tempdir().unwrap();
-        let q = MockQuoter { prices: RefCell::new(HashMap::new()) };
+        let q = MockQuoter {
+            prices: RefCell::new(HashMap::new()),
+        };
         q.set(BONK, 1.0);
         let t0 = Utc::now();
         let src = QueueSource(VecDeque::from(vec![

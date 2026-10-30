@@ -1,0 +1,46 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  bot:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo fmt --check
+      - run: cargo clippy --all-targets -- -D warnings
+      - run: cargo test
+
+  bridge:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Shell syntax and lint
+        run: |
+          bash -n bridge/scripts/deploy.sh
+          shellcheck bridge/scripts/deploy.sh
+      - name: Python scripts compile
+        run: python -m py_compile bridge/scripts/*.py
+      - name: PDA derivation tests
+        run: python -m unittest discover -s bridge/scripts -v
+      - name: JSON configs parse
+        run: |
+          find bridge -name '*.json' -print0 | xargs -0 -n1 python -m json.tool > /dev/null
+      - name: Compose file is valid
+        working-directory: bridge/agents
+        run: |
+          touch agent-config.json relayer-whitelist.json
+          AGENT_IMAGE_TAG=ci VALIDATOR_KEY=0x VALIDATOR_ULTRACHAIN_SIGNER_KEY=0x \
+          RELAYER_ULTRACHAIN_KEY=0x RELAYER_SOLANA_KEY=0x \
+          VALIDATOR_S3_BUCKET=b VALIDATOR_S3_REGION=r \
+            docker compose config > /dev/null

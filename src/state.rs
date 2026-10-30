@@ -72,7 +72,9 @@ impl State {
     pub fn load_or_new(path: &Path, starting_balance: f64, now: DateTime<Utc>) -> Result<Self> {
         match std::fs::read_to_string(path) {
             Ok(raw) => serde_json::from_str(&raw).context("parsing state file"),
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(Self::new(starting_balance, now)),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                Ok(Self::new(starting_balance, now))
+            }
             Err(e) => Err(e).context("reading state file"),
         }
     }
