@@ -62,6 +62,10 @@ No risk check ever blocks an exit. If an exit quote fails, the position stays op
 - **Ultrachain liquidity.** Jupiter routes Solana mainnet liquidity. If Ultrachain has its own Jupiter-compatible deployment or aggregator, point `jupiter.base_url` at it. Otherwise these quotes show Solana prices, not Ultrachain ones.
 - **Live trading is not built yet.** It needs Jupiter's `/swap` endpoint, transaction signing, submission to an Ultrachain RPC, and confirmation handling. Build it only if `report` shows an edge over a meaningful sample.
 
+## Bridge
+
+`bridge/` deploys a Hyperlane USDC warp route between Ultrachain and Solana mainnet, so funds can move to where Jupiter's liquidity is. See [bridge/README.md](bridge/README.md).
+
 ## Development
 
 ```sh

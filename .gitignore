@@ -1,3 +1,7 @@
 target/
 data/
 config.toml
+bridge/.build/
+bridge/agents/.env
+bridge/keys/
+*-keypair.json

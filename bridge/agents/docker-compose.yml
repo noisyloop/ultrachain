@@ -1,0 +1,73 @@
+# Hyperlane agents for the Ultrachain <-> Solana route.
+#
+# This runs ONE validator next to the relayer, which is fine for a testnet.
+# In production, run each validator on its own machine (ideally with
+# independent operators), using the same `validator` service definition.
+#
+#   cp .env.example .env   # fill in keys and bucket
+#   docker compose up -d
+#
+# Prerequisite: `deploy.sh agent-config` has written agent-config.json and
+# relayer-whitelist.json into this directory.
+
+x-agent: &agent
+  image: ghcr.io/hyperlane-xyz/hyperlane-agent:${AGENT_IMAGE_TAG:?pin a release tag}
+  restart: unless-stopped
+  volumes:
+    - ./agent-config.json:/config/agent-config.json:ro
+  environment: &agent-env
+    CONFIG_FILES: /config/agent-config.json
+    RUST_LOG: info
+
+services:
+  validator:
+    <<: *agent
+    environment:
+      <<: *agent-env
+      AWS_ACCESS_KEY_ID: ${VALIDATOR_AWS_ACCESS_KEY_ID}
+      AWS_SECRET_ACCESS_KEY: ${VALIDATOR_AWS_SECRET_ACCESS_KEY}
+    volumes:
+      - ./agent-config.json:/config/agent-config.json:ro
+      - validator-db:/data
+    command:
+      - ./validator
+      - --db=/data/validator
+      - --originChainName=ultrachain
+      # Signs checkpoints. Its Ethereum-style address goes in
+      # config/solana-multisig-config.json.
+      - --validator.type=hexKey
+      - --validator.key=${VALIDATOR_KEY:?}
+      # Pays for the one-time self-announce tx on Ultrachain; fund it.
+      - --chains.ultrachain.signer.type=hexKey
+      - --chains.ultrachain.signer.key=${VALIDATOR_ULTRACHAIN_SIGNER_KEY:?}
+      # Checkpoints must be publicly readable so relayers can fetch them.
+      - --checkpointSyncer.type=s3
+      - --checkpointSyncer.bucket=${VALIDATOR_S3_BUCKET:?}
+      - --checkpointSyncer.region=${VALIDATOR_S3_REGION:?}
+
+  relayer:
+    <<: *agent
+    volumes:
+      - ./agent-config.json:/config/agent-config.json:ro
+      - ./relayer-whitelist.json:/config/relayer-whitelist.json:ro
+      - relayer-db:/data
+    entrypoint: ["tini", "--", "sh", "-c"]
+    command:
+      - >-
+        exec ./relayer
+        --db=/data/relayer
+        --relayChains=ultrachain,solanamainnet
+        --chains.ultrachain.signer.type=hexKey
+        --chains.ultrachain.signer.key=$${RELAYER_ULTRACHAIN_KEY}
+        --chains.solanamainnet.signer.type=hexKey
+        --chains.solanamainnet.signer.key=$${RELAYER_SOLANA_KEY}
+        --gasPaymentEnforcement='[{"type":"none"}]'
+        --whitelist="$$(cat /config/relayer-whitelist.json)"
+    environment:
+      <<: *agent-env
+      RELAYER_ULTRACHAIN_KEY: ${RELAYER_ULTRACHAIN_KEY:?}
+      RELAYER_SOLANA_KEY: ${RELAYER_SOLANA_KEY:?}
+
+volumes:
+  validator-db:
+  relayer-db:
