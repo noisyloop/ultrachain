@@ -1,0 +1,50 @@
+# Copy to config.toml and edit. config.toml is git-ignored.
+
+# "paper" quotes real Jupiter routes but only logs would-be trades.
+# "live" is refused by this build on purpose.
+mode = "paper"
+tick_secs = 15
+data_dir = "data"
+starting_balance = 1000.0   # paper USDC
+
+[quote_token]
+symbol = "USDC"
+mint = "EPjFWdd5AufqSSqeM2qN1xDybapC8G4wEGGkZwyTDt1v"
+decimals = 6
+
+# Every token the tracker may signal. Signals can reference a symbol or mint.
+[[tokens]]
+symbol = "SOL"
+mint = "So11111111111111111111111111111111111111112"
+decimals = 9
+
+[[tokens]]
+symbol = "BONK"
+mint = "DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263"
+decimals = 5
+
+[jupiter]
+# Free tier. For api.jup.ag set base_url = "https://api.jup.ag/swap/v1"
+# and api_key (or the JUPITER_API_KEY env var).
+base_url = "https://lite-api.jup.ag/swap/v1"
+slippage_bps = 50
+timeout_secs = 10
+
+# Where the tracker's signals come from. Either tail a JSON-lines file:
+[signals]
+kind = "file"
+path = "signals.jsonl"
+# ...or poll an HTTP endpoint returning a JSON array:
+# kind = "http"
+# url = "http://localhost:8080/signals"
+
+[risk]
+max_position_size = 100.0     # USDC per position, hard cap
+max_open_positions = 3
+stop_loss_pct = 8.0           # close at -8% (net of exit fee)
+take_profit_pct = 20.0        # optional; delete to disable
+daily_loss_cap = 50.0         # USDC; realized + unrealized since 00:00 UTC
+flatten_on_daily_cap = true   # also close everything when the cap is hit
+max_price_impact_pct = 1.0    # skip entries with worse impact
+max_signal_age_secs = 120     # ignore stale signals
+est_fee_per_swap = 0.01       # network + priority fee estimate, USDC
