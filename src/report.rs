@@ -25,6 +25,21 @@ pub struct Summary {
     pub first_ts: Option<chrono::DateTime<chrono::Utc>>,
     pub last_ts: Option<chrono::DateTime<chrono::Utc>>,
     pub open_events: usize,
+    pub by_token: BTreeMap<String, (usize, f64)>,
+    /// Benchmark token price at the first and last snapshot that had one.
+    pub bench_start: Option<f64>,
+    pub bench_end: Option<f64>,
+}
+
+impl Summary {
+    /// Buy-and-hold return of the benchmark over the run, in %.
+    pub fn bench_return_pct(&self) -> Option<f64> {
+        Some((self.bench_end? - self.bench_start?) / self.bench_start? * 100.0)
+    }
+
+    pub fn return_pct(&self) -> Option<f64> {
+        Some((self.end_equity? - self.start_equity?) / self.start_equity? * 100.0)
+    }
 }
 
 pub fn summarize(events: &[Event]) -> Summary {
@@ -38,11 +53,15 @@ pub fn summarize(events: &[Event]) -> Summary {
             }
             Event::Close {
                 ts,
+                symbol,
                 reason,
                 pnl,
                 fee,
                 ..
             } => {
+                let t = s.by_token.entry(symbol.clone()).or_default();
+                t.0 += 1;
+                t.1 += pnl;
                 s.trades += 1;
                 s.fees += fee;
                 if *pnl > 0.0 {
@@ -67,7 +86,16 @@ pub fn summarize(events: &[Event]) -> Summary {
                 *s.rejects.entry(key).or_default() += 1;
             }
             Event::Halt { .. } => s.halts += 1,
-            Event::Equity { ts, equity, .. } => {
+            Event::Equity {
+                ts,
+                equity,
+                benchmark_price,
+                ..
+            } => {
+                if let Some(b) = benchmark_price {
+                    s.bench_start.get_or_insert(*b);
+                    s.bench_end = Some(*b);
+                }
                 s.start_equity.get_or_insert(*equity);
                 s.end_equity = Some(*equity);
                 s.first_ts.get_or_insert(*ts);
@@ -102,6 +130,12 @@ pub fn render(s: &Summary) -> String {
             o,
             "Equity:          {start:.2} -> {end:.2} ({:+.2}%)",
             (end - start) / start * 100.0
+        );
+    }
+    if let (Some(b), Some(r)) = (s.bench_return_pct(), s.return_pct()) {
+        let _ = writeln!(
+            o,
+            "Buy & hold:      {b:+.2}% for the benchmark vs {r:+.2}% for the strategy"
         );
     }
     let _ = writeln!(
@@ -147,6 +181,12 @@ pub fn render(s: &Summary) -> String {
         let _ = writeln!(o, "\nExits by reason:");
         for (r, (n, pnl)) in &s.by_reason {
             let _ = writeln!(o, "  {r:<12} {n:>5} trades  {pnl:+10.2}");
+        }
+    }
+    if !s.by_token.is_empty() {
+        let _ = writeln!(o, "\nBy token:");
+        for (t, (n, pnl)) in &s.by_token {
+            let _ = writeln!(o, "  {t:<12} {n:>5} trades  {pnl:+10.2}");
         }
     }
     if !s.by_day.is_empty() {
@@ -230,6 +270,7 @@ mod tests {
             equity,
             day_pnl: 0.0,
             open_positions: 0,
+            benchmark_price: None,
         }
     }
 

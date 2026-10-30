@@ -3,6 +3,8 @@ mod dashboard;
 mod engine;
 mod jupiter;
 mod ledger;
+mod live;
+mod notify;
 mod report;
 mod risk;
 mod signal;
@@ -17,10 +19,12 @@ use clap::{Parser, Subcommand};
 use crate::config::{Config, Mode, SignalConfig};
 use crate::engine::Engine;
 use crate::jupiter::JupiterClient;
+use crate::live::LiveExecutor;
+use crate::notify::Notifier;
 use crate::signal::{AnySource, FileSource, HttpSource};
 
 #[derive(Parser)]
-#[command(about = "Ultrachain signal-following trading bot (paper mode)")]
+#[command(about = "Ultrachain signal-following trading bot (paper by default)")]
 struct Cli {
     #[command(subcommand)]
     cmd: Cmd,
@@ -32,6 +36,9 @@ enum Cmd {
     Run {
         #[arg(short, long, default_value = "config.toml")]
         config: PathBuf,
+        /// Required together with mode = "live" to trade real funds.
+        #[arg(long)]
+        live: bool,
     },
     /// Summarize the paper-trading ledger.
     Report {
@@ -52,7 +59,7 @@ async fn main() -> Result<()> {
         .init();
 
     match Cli::parse().cmd {
-        Cmd::Run { config } => run(Config::load(&config)?).await,
+        Cmd::Run { config, live } => run(Config::load(&config)?, live).await,
         Cmd::Report { ledger, html } => {
             let events = ledger::read_all(&ledger)?;
             let summary = report::summarize(&events);
@@ -66,20 +73,30 @@ async fn main() -> Result<()> {
     }
 }
 
-async fn run(cfg: Config) -> Result<()> {
-    if cfg.mode == Mode::Live {
-        bail!(
-            "live mode is not implemented: paper trade first and review `report`. \
-             Set mode = \"paper\" in the config."
-        );
-    }
+async fn run(cfg: Config, live_flag: bool) -> Result<()> {
+    let live = match (cfg.mode, live_flag) {
+        (Mode::Paper, false) => None,
+        (Mode::Paper, true) => bail!("--live given but config has mode = \"paper\""),
+        (Mode::Live, false) => bail!(
+            "config has mode = \"live\": pass --live as well to trade real funds. \
+             Live execution is an untested sketch; paper trade first and review `report`."
+        ),
+        (Mode::Live, true) => Some(LiveExecutor::new(
+            cfg.jupiter.clone(),
+            cfg.live.clone().expect("validated"),
+        )?),
+    };
     let quoter = JupiterClient::new(cfg.jupiter.clone())?;
     let source = match &cfg.signals {
         SignalConfig::File { path } => AnySource::File(FileSource::new(path.clone())),
         SignalConfig::Http { url } => AnySource::Http(HttpSource::new(url.clone())?),
     };
     let tick = Duration::from_secs(cfg.tick_secs);
-    let mut engine = Engine::new(cfg, quoter, source, chrono::Utc::now())?;
+    let notifier = Notifier::new(cfg.alerts.webhook_url.clone());
+    let mut engine = Engine::new(cfg, quoter, source, chrono::Utc::now())?.with_notifier(notifier);
+    if let Some(live) = live {
+        engine = engine.with_live(live);
+    }
 
     let mut interval = tokio::time::interval(tick);
     interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);

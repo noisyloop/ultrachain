@@ -3,6 +3,10 @@
 the USDC locked in the Solana escrow.
 
     check-supply.py [--warp program-ids.json] [--solana-rpc URL] [--ultrachain-rpc URL]
+                    [--every SECONDS] [--webhook URL]
+
+With --every it loops forever (for a monitor container) and posts to
+--webhook (Slack/Discord-style, or ALERT_WEBHOOK_URL) when the check fails.
 
 Exits 0 when backed, 2 when the synthetic supply exceeds the collateral (page
 someone), 1 on errors. Supply can briefly be *below* collateral while a
@@ -14,7 +18,9 @@ import argparse
 import hashlib
 import json
 import pathlib
+import os
 import sys
+import time
 import urllib.request
 
 BRIDGE_DIR = pathlib.Path(__file__).resolve().parent.parent
@@ -103,13 +109,40 @@ def rpc_from_registry(chain: str) -> str:
     raise SystemExit(f"no RPC for {chain} in registry")
 
 
+def alert(url: str | None, msg: str) -> None:
+    print(msg, file=sys.stderr)
+    if not url:
+        return
+    body = json.dumps({"text": msg, "content": msg}).encode()
+    try:
+        urllib.request.urlopen(urllib.request.Request(url, body, {"content-type": "application/json"}), timeout=10)
+    except Exception as e:  # noqa: BLE001 - alerting must never crash the monitor
+        print(f"alert delivery failed: {e}", file=sys.stderr)
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--warp", default=str(DEFAULT_WARP))
     ap.add_argument("--solana-rpc")
     ap.add_argument("--ultrachain-rpc")
+    ap.add_argument("--every", type=int, help="loop, checking every N seconds")
+    ap.add_argument("--webhook", default=os.environ.get("ALERT_WEBHOOK_URL"))
     a = ap.parse_args()
+    if not a.every:
+        return check(a)
+    last = 0
+    while True:
+        code = check(a)
+        if code != 0 and code != last:
+            alert(a.webhook, f"Bridge supply check failed (exit {code}): "
+                  + ("UNBACKED SUPPLY - pause the bridge" if code == 2 else "RPC error"))
+        elif code == 0 and last != 0:
+            alert(a.webhook, "Bridge supply check is passing again.")
+        last = code
+        time.sleep(a.every)
 
+
+def check(a: argparse.Namespace) -> int:
     warp = json.load(open(a.warp))
     escrow = escrow_address(warp["solanamainnet"]["base58"])
     mint = mint_address(warp["ultrachain"]["base58"])

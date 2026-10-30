@@ -66,6 +66,8 @@ pub fn render(events: &[Event], s: &Summary) -> String {
         "halts": s.halts,
         "equity": thinned,
         "by_day": s.by_day.iter().map(|(d, p)| (d.to_string(), *p)).collect::<Vec<_>>(),
+        "bench_return_pct": s.bench_return_pct(),
+        "by_token": s.by_token.iter().map(|(t, (n, p))| json!({"token": t, "n": n, "pnl": p})).collect::<Vec<_>>(),
         "by_reason": s.by_reason.iter().map(|(r, (n, p))| json!({"reason": r, "n": n, "pnl": p})).collect::<Vec<_>>(),
         "rejects": s.rejects.iter().map(|(r, n)| json!({"reason": r, "n": n})).collect::<Vec<_>>(),
         "recent": trades,
@@ -92,6 +94,7 @@ mod tests {
                 equity: 1000.0,
                 day_pnl: 0.0,
                 open_positions: 0,
+                benchmark_price: None,
             },
             Event::Close {
                 ts,

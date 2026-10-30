@@ -1,5 +1,5 @@
-//! The paper-trading loop: ingest signals, price would-be swaps through
-//! Jupiter, enforce risk limits, and log everything.
+//! The trading loop: ingest signals, price swaps through Jupiter, enforce
+//! risk limits, fill (on paper, or live via `LiveExecutor`), log everything.
 
 use std::path::PathBuf;
 
@@ -7,8 +7,10 @@ use anyhow::Result;
 use chrono::{DateTime, Utc};
 
 use crate::config::{Config, Token};
-use crate::jupiter::Quoter;
+use crate::jupiter::{Quote, Quoter};
 use crate::ledger::{Event, Ledger};
+use crate::live::LiveExecutor;
+use crate::notify::Notifier;
 use crate::risk::{self, ExitReason};
 use crate::signal::{Side, Signal, SignalSource};
 use crate::state::{Position, State};
@@ -23,6 +25,11 @@ pub struct Engine<Q, S> {
     ledger: Ledger,
     state_path: PathBuf,
     last_snapshot: Option<DateTime<Utc>>,
+    notifier: Notifier,
+    live: Option<LiveExecutor>,
+    /// Some position's price is older than `max_mark_staleness_secs`.
+    quotes_stale: bool,
+    benchmark_price: Option<f64>,
 }
 
 impl<Q: Quoter, S: SignalSource> Engine<Q, S> {
@@ -45,12 +52,35 @@ impl<Q: Quoter, S: SignalSource> Engine<Q, S> {
             ledger,
             state_path,
             last_snapshot: None,
+            notifier: Notifier::disabled(),
+            live: None,
+            quotes_stale: false,
+            benchmark_price: None,
         })
+    }
+
+    pub fn with_notifier(mut self, n: Notifier) -> Self {
+        self.notifier = n;
+        self
+    }
+
+    pub fn with_live(mut self, live: LiveExecutor) -> Self {
+        self.live = Some(live);
+        self
+    }
+
+    fn mode_label(&self) -> &'static str {
+        if self.live.is_some() { "LIVE" } else { "PAPER" }
     }
 
     pub async fn tick(&mut self, now: DateTime<Utc>) -> Result<()> {
         if self.state.roll_day(now) {
             tracing::info!(day = %self.state.day, equity = self.state.equity(), "new UTC day");
+        }
+
+        // Refresh the benchmark first so every snapshot this tick has it.
+        if self.benchmark_price.is_none() || self.snapshot_due(now) {
+            self.refresh_benchmark().await;
         }
 
         // 1. Re-mark open positions and enforce stop loss / take profit.
@@ -71,6 +101,7 @@ impl<Q: Quoter, S: SignalSource> Engine<Q, S> {
             Err(e) => tracing::warn!("signal poll failed: {e:#}"),
         }
 
+        self.check_staleness(now).await;
         self.snapshot(now, false)?;
         self.state.save(&self.state_path)?;
         Ok(())
@@ -86,6 +117,7 @@ impl<Q: Quoter, S: SignalSource> Engine<Q, S> {
                     let value = self.cfg.quote_token.to_ui(q.out_amount);
                     let pos = self.state.positions.get_mut(&mint).unwrap();
                     pos.last_value = value;
+                    pos.last_marked = Some(now);
                     if let Some(reason) = risk::exit_trigger(pos, value, &self.cfg.risk) {
                         self.close(&mint, reason, now).await?;
                     }
@@ -104,11 +136,12 @@ impl<Q: Quoter, S: SignalSource> Engine<Q, S> {
             return Ok(());
         }
         self.state.halted = true;
-        tracing::warn!(
-            day_pnl,
-            cap = self.cfg.risk.daily_loss_cap,
-            "daily loss cap hit; halting entries"
-        );
+        self.notifier
+            .alert(&format!(
+                "Daily loss cap hit ({day_pnl:.2} <= -{:.2}); entries halted until 00:00 UTC",
+                self.cfg.risk.daily_loss_cap
+            ))
+            .await;
         self.ledger.record(&Event::Halt {
             ts: now,
             day_pnl,
@@ -144,11 +177,14 @@ impl<Q: Quoter, S: SignalSource> Engine<Q, S> {
     }
 
     async fn open(&mut self, sig: &Signal, token: &Token, now: DateTime<Utc>) -> Result<()> {
+        if self.quotes_stale {
+            return self.reject(sig, now, "prices stale; entries paused".into());
+        }
         let size = match risk::entry_size(&self.state, &self.cfg.risk, &token.mint, sig.strength) {
             Ok(s) => s,
             Err(r) => return self.reject(sig, now, r.to_string()),
         };
-        let qt = &self.cfg.quote_token;
+        let qt = self.cfg.quote_token.clone();
         let amount = qt.to_base_units(size);
         let q = match self.quoter.quote(&qt.mint, &token.mint, amount).await {
             Ok(q) => q,
@@ -160,24 +196,29 @@ impl<Q: Quoter, S: SignalSource> Engine<Q, S> {
         if q.out_amount == 0 {
             return self.reject(sig, now, "quote returned zero output".into());
         }
+        let out_amount = match self.fill(&q).await {
+            Ok(out) => out,
+            Err(reason) => return self.reject(sig, now, reason),
+        };
 
         let spend = qt.to_ui(q.in_amount);
         let fee = self.cfg.risk.est_fee_per_swap;
-        let qty_ui = token.to_ui(q.out_amount);
+        let qty_ui = token.to_ui(out_amount);
         self.state.cash -= spend + fee;
         self.state.positions.insert(
             token.mint.clone(),
             Position {
                 symbol: token.symbol.clone(),
                 mint: token.mint.clone(),
-                qty: q.out_amount,
+                qty: out_amount,
                 cost: spend + fee,
                 opened_at: now,
                 signal_id: sig.id.clone(),
                 last_value: spend,
+                last_marked: Some(now),
             },
         );
-        tracing::info!(symbol = %token.symbol, spend, qty = qty_ui, route = %q.route, "PAPER BUY");
+        tracing::info!(mode = self.mode_label(), symbol = %token.symbol, spend, qty = qty_ui, route = %q.route, "BUY");
         self.ledger.record(&Event::Open {
             ts: now,
             signal_id: sig.id.clone(),
@@ -207,8 +248,15 @@ impl<Q: Quoter, S: SignalSource> Engine<Q, S> {
                 return Ok(());
             }
         };
+        let out_amount = match self.fill(&q).await {
+            Ok(out) => out,
+            Err(reason) => {
+                tracing::error!(symbol = %pos.symbol, ?reason, "exit fill failed; retrying next tick: {reason}");
+                return Ok(());
+            }
+        };
         let fee = self.cfg.risk.est_fee_per_swap;
-        let proceeds = qt.to_ui(q.out_amount) - fee;
+        let proceeds = qt.to_ui(out_amount) - fee;
         let pnl = proceeds - pos.cost;
         let qty_ui = self
             .cfg
@@ -217,7 +265,7 @@ impl<Q: Quoter, S: SignalSource> Engine<Q, S> {
             .unwrap_or(pos.qty as f64);
         self.state.cash += proceeds;
         self.state.positions.remove(mint);
-        tracing::info!(symbol = %pos.symbol, ?reason, pnl, "PAPER SELL");
+        tracing::info!(mode = self.mode_label(), symbol = %pos.symbol, ?reason, pnl, "SELL");
         self.ledger.record(&Event::Close {
             ts: now,
             symbol: pos.symbol.clone(),
@@ -251,10 +299,86 @@ impl<Q: Quoter, S: SignalSource> Engine<Q, S> {
         })
     }
 
+    /// Fill a quoted swap. Paper: maybe fail, then shave `haircut_bps`.
+    /// Live: submit it and wait for confirmation. Returns the output amount.
+    async fn fill(&mut self, q: &Quote) -> Result<u64, String> {
+        if let Some(live) = &self.live {
+            return match live.execute(q).await {
+                // TODO: use the actual balance change, not the quote.
+                Ok(sig) => {
+                    tracing::info!(%sig, "live swap confirmed");
+                    Ok(q.out_amount)
+                }
+                Err(e) => {
+                    let msg = format!("live swap failed: {e:#}");
+                    self.notifier.alert(&msg).await;
+                    Err(msg)
+                }
+            };
+        }
+        let p = &self.cfg.paper;
+        if p.fail_rate > 0.0 && rand::random::<f64>() < p.fail_rate {
+            return Err("simulated transaction failure".into());
+        }
+        let keep = 1.0 - p.haircut_bps as f64 / 10_000.0;
+        Ok((q.out_amount as f64 * keep) as u64)
+    }
+
+    /// Pause entries (and alert once) while any position's price is stale,
+    /// because its stop loss can't fire until quotes work again.
+    async fn check_staleness(&mut self, now: DateTime<Utc>) {
+        let limit = self.cfg.risk.max_mark_staleness_secs;
+        let stale: Vec<String> = self
+            .state
+            .positions
+            .values()
+            .filter(|p| (now - p.last_marked.unwrap_or(p.opened_at)).num_seconds() > limit)
+            .map(|p| p.symbol.clone())
+            .collect();
+        match (stale.is_empty(), self.quotes_stale) {
+            (false, false) => {
+                self.quotes_stale = true;
+                self.notifier
+                    .alert(&format!(
+                        "No price for {} in over {limit}s; stop losses can't fire. New entries paused.",
+                        stale.join(", ")
+                    ))
+                    .await;
+            }
+            (true, true) => {
+                self.quotes_stale = false;
+                self.notifier
+                    .alert("Prices are fresh again; entries resumed.")
+                    .await;
+            }
+            _ => {}
+        }
+    }
+
+    async fn refresh_benchmark(&mut self) {
+        let Some(token) = self
+            .cfg
+            .benchmark
+            .as_ref()
+            .and_then(|b| self.cfg.resolve_token(b))
+        else {
+            return;
+        };
+        let (mint, one) = (token.mint.clone(), token.to_base_units(1.0));
+        let qt = self.cfg.quote_token.clone();
+        match self.quoter.quote(&mint, &qt.mint, one).await {
+            Ok(q) => self.benchmark_price = Some(qt.to_ui(q.out_amount)),
+            Err(e) => tracing::warn!("benchmark quote failed: {e:#}"),
+        }
+    }
+
+    fn snapshot_due(&self, now: DateTime<Utc>) -> bool {
+        self.last_snapshot
+            .is_none_or(|t| (now - t).num_seconds() >= EQUITY_SNAPSHOT_SECS)
+    }
+
     fn snapshot(&mut self, now: DateTime<Utc>, force: bool) -> Result<()> {
-        let due = self
-            .last_snapshot
-            .is_none_or(|t| (now - t).num_seconds() >= EQUITY_SNAPSHOT_SECS);
+        let due = self.snapshot_due(now);
         if !force && !due {
             return Ok(());
         }
@@ -265,6 +389,7 @@ impl<Q: Quoter, S: SignalSource> Engine<Q, S> {
             equity: self.state.equity(),
             day_pnl: self.state.day_pnl(),
             open_positions: self.state.positions.len(),
+            benchmark_price: self.benchmark_price,
         })
     }
 }
@@ -284,6 +409,7 @@ mod tests {
     /// Prices are quote-token per UI token; no impact.
     struct MockQuoter {
         prices: RefCell<HashMap<String, f64>>,
+        down: std::cell::Cell<bool>,
     }
 
     impl MockQuoter {
@@ -294,6 +420,7 @@ mod tests {
 
     impl Quoter for &MockQuoter {
         async fn quote(&self, input: &str, output: &str, amount: u64) -> Result<Quote> {
+            anyhow::ensure!(!self.down.get(), "quotes down");
             let p = self.prices.borrow();
             // USDC has 6 decimals, BONK has 5 in this test.
             let out = if input == USDC {
@@ -306,6 +433,7 @@ mod tests {
                 out_amount: out,
                 price_impact_pct: 0.1,
                 route: "Mock".into(),
+                raw: serde_json::Value::Null,
             })
         }
     }
@@ -350,8 +478,13 @@ mod tests {
                 flatten_on_daily_cap: true,
                 max_price_impact_pct: 1.0,
                 max_signal_age_secs: 60,
+                max_mark_staleness_secs: 120,
                 est_fee_per_swap: 0.0,
             },
+            benchmark: None,
+            paper: PaperConfig::default(),
+            alerts: AlertConfig::default(),
+            live: None,
         }
     }
 
@@ -370,6 +503,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let q = MockQuoter {
             prices: RefCell::new(HashMap::new()),
+            down: Default::default(),
         };
         q.set(BONK, 0.5);
         let t0 = Utc::now();
@@ -411,6 +545,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let q = MockQuoter {
             prices: RefCell::new(HashMap::new()),
+            down: Default::default(),
         };
         q.set(BONK, 1.0);
         let t0 = Utc::now();
@@ -437,6 +572,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let q = MockQuoter {
             prices: RefCell::new(HashMap::new()),
+            down: Default::default(),
         };
         q.set(BONK, 1.0);
         let t0 = Utc::now();
@@ -454,5 +590,59 @@ mod tests {
 
         let reloaded = State::load_or_new(&dir.path().join("state.json"), 0.0, t0).unwrap();
         assert!((reloaded.cash - 1_010.0).abs() < 1e-3);
+    }
+
+    #[tokio::test]
+    async fn stale_prices_pause_entries_until_quotes_recover() {
+        let dir = tempfile::tempdir().unwrap();
+        let q = MockQuoter {
+            prices: RefCell::new(HashMap::new()),
+            down: Default::default(),
+        };
+        q.set(BONK, 1.0);
+        let t0 = Utc::now();
+        let mut other = sig("s2", Side::Buy, t0 + chrono::Duration::seconds(200));
+        other.token = "BONK".into();
+        let src = QueueSource(VecDeque::from(vec![vec![sig("s1", Side::Buy, t0)], vec![]]));
+        let mut eng = Engine::new(cfg(dir.path()), &q, src, t0).unwrap();
+        eng.tick(t0).await.unwrap();
+        assert_eq!(eng.state.positions.len(), 1);
+
+        q.down.set(true);
+        eng.tick(t0 + chrono::Duration::seconds(200)).await.unwrap();
+        assert!(eng.quotes_stale);
+        eng.state.positions.clear();
+        assert!(
+            eng.open(&other, &cfg(dir.path()).tokens[0], t0)
+                .await
+                .is_ok()
+        );
+        assert!(
+            eng.state.positions.is_empty(),
+            "entry must be refused while stale"
+        );
+
+        q.down.set(false);
+        eng.check_staleness(t0 + chrono::Duration::seconds(201))
+            .await;
+        assert!(!eng.quotes_stale);
+    }
+
+    #[tokio::test]
+    async fn paper_haircut_reduces_fills() {
+        let dir = tempfile::tempdir().unwrap();
+        let q = MockQuoter {
+            prices: RefCell::new(HashMap::new()),
+            down: Default::default(),
+        };
+        q.set(BONK, 1.0);
+        let mut c = cfg(dir.path());
+        c.paper.haircut_bps = 100;
+        let t0 = Utc::now();
+        let src = QueueSource(VecDeque::from(vec![vec![sig("s1", Side::Buy, t0)]]));
+        let mut eng = Engine::new(c, &q, src, t0).unwrap();
+        eng.tick(t0).await.unwrap();
+        // 100 USDC at 1.0 = 100 BONK = 10_000_000 base units, minus 1%.
+        assert_eq!(eng.state.positions[BONK].qty, 9_900_000);
     }
 }

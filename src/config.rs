@@ -8,7 +8,7 @@ use serde::Deserialize;
 pub enum Mode {
     /// Quote real routes through Jupiter, but only record "would-be" fills.
     Paper,
-    /// Sign and submit swaps. Not implemented in this build; refused at startup.
+    /// Sign and submit real swaps. UNTESTED sketch: also requires `run --live`.
     Live,
 }
 
@@ -29,6 +29,49 @@ pub struct Config {
     pub jupiter: JupiterConfig,
     pub signals: SignalConfig,
     pub risk: RiskConfig,
+    /// Token to compare against as buy-and-hold (symbol from `tokens`).
+    #[serde(default)]
+    pub benchmark: Option<String>,
+    #[serde(default)]
+    pub paper: PaperConfig,
+    #[serde(default)]
+    pub alerts: AlertConfig,
+    #[serde(default)]
+    pub live: Option<LiveConfig>,
+}
+
+/// Makes paper fills less flattering than a perfect instant quote.
+#[derive(Debug, Clone, Deserialize, Default)]
+pub struct PaperConfig {
+    /// Fraction of swaps that "fail" like a dropped transaction (0.0-1.0).
+    /// Failed entries are skipped; failed exits retry next tick.
+    #[serde(default)]
+    pub fail_rate: f64,
+    /// Shave this many bps off every fill's output, standing in for the price
+    /// moving between quote and landing.
+    #[serde(default)]
+    pub haircut_bps: u32,
+}
+
+#[derive(Debug, Clone, Deserialize, Default)]
+pub struct AlertConfig {
+    /// Slack- or Discord-compatible incoming webhook. Falls back to the
+    /// ALERT_WEBHOOK_URL environment variable.
+    #[serde(default)]
+    pub webhook_url: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct LiveConfig {
+    /// Solana JSON keypair file of the trading wallet.
+    pub keypair_path: PathBuf,
+    /// RPC used to send and confirm transactions.
+    pub rpc_url: String,
+    /// Priority fee in lamports; omit to let Jupiter pick ("auto").
+    #[serde(default)]
+    pub priority_fee_lamports: Option<u64>,
+    #[serde(default = "default_confirm_timeout_secs")]
+    pub confirm_timeout_secs: u64,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -85,12 +128,22 @@ pub struct RiskConfig {
     /// Ignore signals older than this many seconds.
     #[serde(default = "default_max_signal_age_secs")]
     pub max_signal_age_secs: i64,
+    /// Block new entries and alert when any open position has gone this long
+    /// without a successful price quote (its stop loss can't fire meanwhile).
+    #[serde(default = "default_max_mark_staleness_secs")]
+    pub max_mark_staleness_secs: i64,
     /// Flat per-swap cost estimate (network + priority fees) in quote-token
     /// units, deducted from paper fills so results aren't flattering.
     #[serde(default)]
     pub est_fee_per_swap: f64,
 }
 
+fn default_max_mark_staleness_secs() -> i64 {
+    120
+}
+fn default_confirm_timeout_secs() -> u64 {
+    60
+}
 fn default_tick_secs() -> u64 {
     15
 }
@@ -129,6 +182,11 @@ impl Config {
                 .ok()
                 .filter(|k| !k.is_empty());
         }
+        if cfg.alerts.webhook_url.is_none() {
+            cfg.alerts.webhook_url = std::env::var("ALERT_WEBHOOK_URL")
+                .ok()
+                .filter(|k| !k.is_empty());
+        }
         cfg.validate()?;
         Ok(cfg)
     }
@@ -151,6 +209,17 @@ impl Config {
             && tp <= 0.0
         {
             bail!("risk.take_profit_pct must be > 0");
+        }
+        if !(0.0..1.0).contains(&self.paper.fail_rate) {
+            bail!("paper.fail_rate must be in [0, 1)");
+        }
+        if let Some(b) = &self.benchmark
+            && self.resolve_token(b).is_none()
+        {
+            bail!("benchmark {b} is not in tokens");
+        }
+        if self.mode == Mode::Live && self.live.is_none() {
+            bail!("mode = \"live\" needs a [live] section");
         }
         if self.starting_balance <= 0.0 {
             bail!("starting_balance must be > 0");
@@ -179,5 +248,20 @@ impl Token {
 
     pub fn to_ui(&self, base_units: u64) -> f64 {
         base_units as f64 / 10f64.powi(self.decimals as i32)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn example_config_parses_and_validates() {
+        let cfg: Config = toml::from_str(include_str!("../config.example.toml")).unwrap();
+        cfg.validate().unwrap();
+        assert_eq!(cfg.benchmark.as_deref(), Some("SOL"));
+        assert_eq!(cfg.paper.haircut_bps, 20);
+        assert_eq!(cfg.risk.max_mark_staleness_secs, 120);
+        assert!(cfg.live.is_none());
     }
 }

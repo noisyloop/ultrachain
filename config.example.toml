@@ -6,6 +6,8 @@ mode = "paper"
 tick_secs = 15
 data_dir = "data"
 starting_balance = 1000.0   # paper USDC
+# Compare the strategy against simply holding this token (symbol from [[tokens]]).
+benchmark = "SOL"
 
 [quote_token]
 symbol = "USDC"
@@ -48,3 +50,20 @@ flatten_on_daily_cap = true   # also close everything when the cap is hit
 max_price_impact_pct = 1.0    # skip entries with worse impact
 max_signal_age_secs = 120     # ignore stale signals
 est_fee_per_swap = 0.01       # network + priority fee estimate, USDC
+max_mark_staleness_secs = 120 # pause entries + alert if a position has no fresh price this long
+
+# Make paper fills less flattering.
+[paper]
+fail_rate = 0.05     # 5% of swaps "fail" (entries skipped, exits retried)
+haircut_bps = 20     # shave 0.2% off every fill for quote->landing drift
+
+[alerts]
+# Slack/Discord incoming webhook, or set ALERT_WEBHOOK_URL.
+# webhook_url = "https://hooks.slack.com/services/..."
+
+# UNTESTED SKETCH. Only used with mode = "live" AND `run --live`.
+# [live]
+# keypair_path = "/secure/trading-wallet.json"
+# rpc_url = "https://<your-rpc>"
+# priority_fee_lamports = 10000   # omit for Jupiter's "auto"
+# confirm_timeout_secs = 60

@@ -16,6 +16,9 @@
 # Operations, any time after deploy:
 #   pause | unpause  stop / resume Ultrachain -> Solana releases
 #   check-supply     verify Ultrachain synthetic supply <= USDC locked on Solana
+#                    (extra args pass through, e.g. --every 300 --webhook URL)
+#   transfer-ownership <new-owner-pubkey>
+#                    hand every program's owner and upgrade authority to a multisig
 #
 # Required env: DEPLOYER_KEYPAIR (path to a Solana JSON keypair funded on both
 # chains). Optional: HYPERLANE_COMMIT, SOLANA_RPC_URL, SOLANA_INDEX_FROM.
@@ -230,13 +233,56 @@ unpause)
     log "unpaused"
     ;;
 
+transfer-ownership)
+    # SKETCH: review each line before running it against mainnet. The new
+    # owner should be a multisig (e.g. a Squads vault) that exists on BOTH
+    # chains; ownership moved to a wrong key cannot be taken back.
+    [[ $# -eq 2 ]] || die "usage: deploy.sh transfer-ownership <new-owner-pubkey>"
+    new="$2"
+    core="$ENV_DIR/$ENV_NAME/ultrachain/core/program-ids.json"
+    read -r -p "Transfer ALL bridge ownership to $new? Type 'yes': " ok
+    [[ "$ok" == yes ]] || die "aborted"
+
+    # Ultrachain core.
+    client -u "$ULTRACHAIN_RPC" mailbox transfer-ownership \
+        --program-id "$(json_get "$core" mailbox)" "$new"
+    client -u "$ULTRACHAIN_RPC" multisig-ism-message-id transfer-ownership \
+        --program-id "$(json_get "$core" multisig_ism_message_id)" "$new"
+    client -u "$ULTRACHAIN_RPC" igp transfer-igp-ownership \
+        --program-id "$(json_get "$core" igp_program_id)" \
+        --igp-account "$(json_get "$core" igp_account)" "$new"
+    client -u "$ULTRACHAIN_RPC" igp transfer-overhead-igp-ownership \
+        --program-id "$(json_get "$core" igp_program_id)" \
+        --igp-account "$(json_get "$core" overhead_igp_account)" "$new"
+
+    # Warp route routers and the Solana ISM.
+    ultra_router="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["ultrachain"]["base58"])' "$WARP_DIR/program-ids.json")"
+    client -u "$ULTRACHAIN_RPC" token transfer-ownership --program-id "$ultra_router" "$new"
+    client -u "$SOLANA_RPC" token transfer-ownership --program-id "$(solana_router base58)" "$new"
+    client -u "$SOLANA_RPC" composite-ism transfer-ownership \
+        --program-id "$(json_get "$SOLANA_ISM_DIR/program-ids.json" program_id)" "$new"
+
+    # Upgrade authority is separate from the programs' owner field.
+    SOLANA_BIN="${SOLANA_BIN:-solana}"
+    for id in "$(json_get "$core" mailbox)" "$(json_get "$core" multisig_ism_message_id)" \
+        "$(json_get "$core" igp_program_id)" "$(json_get "$core" validator_announce)" "$ultra_router"; do
+        "$SOLANA_BIN" -u "$ULTRACHAIN_RPC" -k "$DEPLOYER_KEYPAIR" program set-upgrade-authority "$id" \
+            --new-upgrade-authority "$new" --skip-new-upgrade-authority-signer-check
+    done
+    for id in "$(solana_router base58)" "$(json_get "$SOLANA_ISM_DIR/program-ids.json" program_id)"; do
+        "$SOLANA_BIN" -u "$SOLANA_RPC" -k "$DEPLOYER_KEYPAIR" program set-upgrade-authority "$id" \
+            --new-upgrade-authority "$new" --skip-new-upgrade-authority-signer-check
+    done
+    log "done. Owner actions (pause, ISM updates) now go through $new"
+    ;;
+
 check-supply)
     python3 "$BRIDGE_DIR/scripts/check-supply.py" --warp "$WARP_DIR/program-ids.json" \
-        --solana-rpc "$SOLANA_RPC" --ultrachain-rpc "$ULTRACHAIN_RPC"
+        --solana-rpc "$SOLANA_RPC" --ultrachain-rpc "$ULTRACHAIN_RPC" "${@:2}"
     ;;
 
 *)
-    sed -n '2,21p' "$0" | sed 's/^# \{0,1\}//'
+    sed -n '2,24p' "$0" | sed 's/^# \{0,1\}//'
     exit 1
     ;;
 esac

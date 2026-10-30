@@ -54,6 +54,7 @@ There are two ways to connect the tracker (`[signals]`):
 | `daily_loss_cap` | Daily PnL is equity now minus equity at 00:00 UTC, so it counts both realized and unrealized losses. When it reaches `-daily_loss_cap`, new entries stop until the next UTC day. With `flatten_on_daily_cap` (on by default), every open position is also closed. |
 | `max_price_impact_pct` | Entries whose quote has a worse price impact are skipped. Exits are never blocked. |
 | `est_fee_per_swap` | A fixed cost subtracted from every paper fill, so the results are not flattering. |
+| `max_mark_staleness_secs` | If any open position goes this long without a successful price quote, its stop loss can't fire. New entries pause and an alert goes out until prices come back. |
 
 No risk check ever blocks an exit. If an exit quote fails, the position stays open and the bot tries again on the next tick.
 
@@ -65,14 +66,36 @@ No risk check ever blocks an exit. If an exit quote fails, the position stays op
 - `halt` records a daily-cap trip.
 - `equity` is a snapshot taken every 5 minutes and after every trade.
 
-`report` turns this into win rate, realized PnL, expectancy, average win and loss, profit factor, max drawdown, PnL by exit reason and by day, and counts of rejections. It ends with a verdict. Under 30 closed trades the verdict is always "keep paper trading".
+`report` turns this into a per-token breakdown and, if `benchmark` is set, a comparison with simply holding that token over the same period. It also gives win rate, realized PnL, expectancy, average win and loss, profit factor, max drawdown, PnL by exit reason and by day, and counts of rejections. It ends with a verdict. Under 30 closed trades the verdict is always "keep paper trading".
+
+## Running it for two weeks
+
+- **Docker:** `docker build -f deploy/Dockerfile -t ultrachain-bot .`. The run command is at the top of the Dockerfile. Mount `config.toml`, `data/` and the signal file.
+- **systemd:** `deploy/ultrachain-bot.service` restarts the bot on crash and keeps logs in `journalctl`.
+- **Alerts:** set `[alerts] webhook_url`, or the `ALERT_WEBHOOK_URL` environment variable, to a Slack or Discord incoming webhook. You get a message when the daily cap trips, when prices go stale and when they recover, and in live mode when a swap fails.
+
+## Paper realism (`[paper]`)
+
+- `fail_rate` makes that fraction of swaps fail like dropped transactions. A failed entry is skipped; a failed exit is retried on the next tick.
+- `haircut_bps` shaves every fill to stand in for the price moving between the quote and the transaction landing.
+
+Set both to something non-zero. A strategy that only works with perfect fills doesn't work.
+
+## Live mode (untested sketch)
+
+`src/live.rs` sends Jupiter's quote to its `/swap` endpoint, signs the returned transaction as fee payer with your wallet key, sends it to `[live] rpc_url`, and waits for confirmation. It only runs with `mode = "live"` in the config **and** `run --live` on the command line. Before it touches real money:
+- fills are recorded at the quoted amount, not the actual balance change;
+- `cash` is still the paper balance, not the wallet's;
+- it has never been run against a real RPC.
+
+Fix those first, then start with a tiny `max_position_size`.
 
 ## Caveats before trusting the numbers
 
-- **Paper fills are optimistic.** A fill is the quoted `outAmount`. There is no latency, no failed transactions, and no MEV.
+- **Paper fills are optimistic.** Even with `[paper]` set, a fill is a quote with a fixed haircut. There's no real latency and no MEV.
 - **Stops can slip past their level.** Stops are checked once per tick (`tick_secs`), so a fast move can close a position well beyond the stop level. The ledger records the real exit PnL.
 - **Ultrachain liquidity.** Jupiter routes Solana mainnet liquidity. If Ultrachain has its own Jupiter-compatible deployment or aggregator, point `jupiter.base_url` at it. Otherwise these quotes show Solana prices, not Ultrachain ones.
-- **Live trading is not built yet.** It needs Jupiter's `/swap` endpoint, transaction signing, submission to an Ultrachain RPC, and confirmation handling. Build it only if `report` shows an edge over a meaningful sample.
+- **Live trading is a sketch.** See *Live mode* above.
 
 ## Bridge
 

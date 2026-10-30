@@ -83,7 +83,8 @@ td.num, th.num { text-align: right; }
   <section class="tiles" id="tiles"></section>
   <div class="grid2">
     <div class="card"><h2>Equity</h2><div class="chart" id="equity"></div></div>
-    <div class="card"><h2>Exits by reason</h2><div class="scroll" id="reasons"></div></div>
+    <div class="card"><h2>Exits by reason</h2><div class="scroll" id="reasons"></div>
+      <h2 style="margin-top:16px">By token</h2><div class="scroll" id="tokens"></div></div>
   </div>
   <div class="card section"><h2>Daily realized PnL</h2><div class="chart" id="daily"></div></div>
   <div class="grid2 section">
@@ -243,6 +244,7 @@ function held(s) {
     { label: "Profit factor", value: D.profit_factor == null ? "—" : fmt(D.profit_factor), sub: "gross win ÷ gross loss" },
     { label: "Max drawdown", value: fmt(D.max_drawdown), sub: `${fmt(D.max_drawdown_pct)}% from peak` },
     { label: "Daily-cap halts", value: String(D.halts), sub: `${D.opened} positions opened` },
+    ...(D.bench_return_pct == null ? [] : [{ label: "Buy & hold benchmark", value: `<span class="${cls(D.bench_return_pct)}">${signed(D.bench_return_pct)}%</span>`, sub: ret == null ? "" : `strategy ${signed(ret)}%` }]),
   ];
   $("tiles").innerHTML = tiles.map((t) =>
     `<div class="card tile${t.hero ? " hero" : ""}"><div class="label">${t.label}</div><div class="value">${t.value}</div><div class="sub">${t.sub}</div></div>`).join("");
@@ -254,6 +256,11 @@ function held(s) {
     { h: "Trades", num: true, v: (r) => r.n },
     { h: "PnL", num: true, v: (r) => signed(r.pnl), cls: (r) => cls(r.pnl) },
   ], D.by_reason, "No exits yet.");
+  table($("tokens"), [
+    { h: "Token", v: (r) => esc(r.token) },
+    { h: "Trades", num: true, v: (r) => r.n },
+    { h: "PnL", num: true, v: (r) => signed(r.pnl), cls: (r) => cls(r.pnl) },
+  ], D.by_token || [], "No closed trades yet.");
   table($("recent"), [
     { h: "Closed", v: (r) => dtFmt(Date.parse(r.ts)) },
     { h: "Token", v: (r) => esc(r.symbol) },
