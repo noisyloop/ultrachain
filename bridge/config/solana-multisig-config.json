@@ -1,0 +1,11 @@
+{
+  "ultrachain": {
+    "type": "messageIdMultisigIsm",
+    "threshold": 2,
+    "validators": [
+      "REPLACE_ME_VALIDATOR_1_ETH_ADDRESS",
+      "REPLACE_ME_VALIDATOR_2_ETH_ADDRESS",
+      "REPLACE_ME_VALIDATOR_3_ETH_ADDRESS"
+    ]
+  }
+}

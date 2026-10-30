@@ -1,0 +1,12 @@
+{
+  "solanamainnet": {
+    "type": "messageIdMultisigIsm",
+    "threshold": 3,
+    "validators": [
+      "0xa5962efa3ec138bf7ca8f7fde86b7ee32e24bf03",
+      "0xcb6bcbd0de155072a7ff486d9d7286b0f71dcc2d",
+      "0x4f977a59fdc2d9e39f6d780a84d5b4add1495a36",
+      "0xd90ea26ff731d967c5ea660851f7d63cb04ab820"
+    ]
+  }
+}

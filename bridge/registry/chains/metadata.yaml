@@ -1,0 +1,16 @@
+# Chain registry read by hyperlane-sealevel-client (FileSystemRegistry format).
+ultrachain:
+  # ASCII "ultr" as a big-endian u32. Not used by any chain in the Hyperlane
+  # registry as of Oct 2026. Must never change once deployed.
+  domainId: 1970041970
+  name: ultrachain
+  isTestnet: false
+  rpcUrls:
+    - http: REPLACE_ME_ULTRACHAIN_RPC_URL
+solanamainnet:
+  domainId: 1399811149
+  name: solanamainnet
+  isTestnet: false
+  rpcUrls:
+    # Use a paid RPC for deploys; the public one rate-limits program uploads.
+    - http: https://api.mainnet-beta.solana.com
